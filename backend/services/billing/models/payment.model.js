@@ -121,6 +121,9 @@ const paymentSchema = new mongoose.Schema({
     failureReason: { type: String, default: null, maxlength: 500 },
     refundId: { type: String, default: null },
     refundAmount: { type: Number, default: 0, min: 0 },
+    // Single-flight guard: only one refund may be in progress per order.
+    refundClaimAt: { type: Date, default: null },
+    refundAttemptId: { type: String, default: null },
     disputeId: { type: String, default: null },
     verifiedAt: { type: Date, default: null },
     cancelledAt: { type: Date, default: null },
