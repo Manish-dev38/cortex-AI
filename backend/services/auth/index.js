@@ -1,37 +1,30 @@
-import express from 'express'
-import connectDb from './config/db.js';
 import 'dotenv/config';
-import router from './routes/auth.route.js';
-import cookieParser from 'cookie-parser';
+import mongoose from 'mongoose';
+import { createApp } from './app.js';
+import { config } from './config/env.js';
+import connectDb from './config/db.js';
 
-const port = process.env.PORT || 7001;
+async function start() {
+    await connectDb();
 
-const app = express();
-app.use(express.json());
-app.use(cookieParser());
-
-app.use("/", router)
-
-app.get("/", (req, res) => {
-  res.json({ message: "hello from Auth" });
-})
-
-function start() {
-  const server = app.listen(port, () => {
-    console.log(`Auth started at http://localhost:${port}`);
-  });
-
-  server.on("error", (err) => {
-    console.error("Server listen error:", err);
-  });
-
-  setImmediate(() => {
-    connectDb().catch((error) => {
-      console.error("MongoDB connection failed:", error.message);
+    const app = createApp();
+    const server = app.listen(config.port, config.host, () => {
+        console.log(`auth listening on http://${config.host}:${config.port}`);
     });
-  });
+
+    const shutdown = (signal) => {
+        console.log(`[auth] ${signal} received, draining...`);
+        server.close(async () => {
+            await mongoose.disconnect().catch(() => {});
+            process.exit(0);
+        });
+        setTimeout(() => process.exit(1), 10_000).unref();
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-start();
-
-
+start().catch((error) => {
+    console.error("[auth] startup aborted:", error.message);
+    process.exit(1);
+});
