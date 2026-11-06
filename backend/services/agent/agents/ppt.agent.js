@@ -2,9 +2,13 @@ import { getModel } from "../config/llmModels.js"
 import { uploadToS3 } from "../utils/uploadToS3.js"
 import { generatePpt } from "../utils/generatePpt.js"
 import { getFromS3 } from "../utils/getFromS3.js"
-import { deductCredits } from "../utils/deductCredits.js"
+import { parseJsonFromLlm } from "../utils/parseJson.js"
+import { chargeAgent, refundAgent, isInsufficientCredits } from "../utils/credits.js"
+
+const LINK_TTL_SECONDS = 48 * 60 * 60
 
 export const pptAgent = async (state) => {
+  let charged = false
   try {
     const llm = await getModel("ppt")
     const prompt = `
@@ -181,11 +185,12 @@ Topic:
 ${state.prompt}
 `;
 
+    await chargeAgent(state.userId, "ppt", state.requestId)
+    charged = true
+
     const res = await llm.invoke(prompt)
 
-    await deductCredits(state.userId, "ppt")
-
-    const data = JSON.parse(res.content)
+    const data = parseJsonFromLlm(res.content)
 
     const ppt = await generatePpt(data)
 
@@ -197,24 +202,29 @@ ${state.prompt}
 
     await uploadToS3(filename, buffer, "application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
-    const downloadUrl = await getFromS3(filename, 48 * 60 * 60);
+    const downloadUrl = await getFromS3(filename, LINK_TTL_SECONDS);
 
     return {
       ...state,
       aiResponse: `
-        # 💹 presentation Generated
+        # Presentation Generated
         ** ${data.title} **
-          👇 [downaod PPt](${downloadUrl})
+          👇 [Download PPT](${downloadUrl})
 
-          _Link expires in 10 minutes._
+          _Link expires in 48 hours._
         `
     }
 
   } catch (error) {
-    console.log(error)
+    if (charged) {
+      await refundAgent(state.userId, "ppt", state.requestId)
+    }
+    if (isInsufficientCredits(error)) throw error
+
+    console.error("[ppt-agent] generation failed:", error?.message ?? "unknown error")
     return {
       ...state,
-      aiResponse: "Failed to Generate ppt"
+      aiResponse: "Failed to generate the presentation. Please try again."
     }
   }
 }

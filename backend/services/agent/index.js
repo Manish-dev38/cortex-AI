@@ -1,38 +1,39 @@
-import express from 'express';
 import 'dotenv/config';
+import mongoose from 'mongoose';
 import connectDb from './config/db.js';
-import router from './routes/agent.route.js';
-
+import { createApp } from './app.js';
 
 const port = process.env.PORT || 3001;
+const host = process.env.HOST || "127.0.0.1";
 
-const app = express();
-app.use(express.json());
-
-app.use("/", router)
-
-
-console.log("port=", process.env.PORT)
-
-app.get("/", (req, res) => {
-    res.json({ message: "hello from AGENT" });
-})
-
-// console.log(`MONGODB URI=>:${process.env.MONGODB_URI}`)
-
-// MONGODB_URI is provided through .env. Never commit connection strings.
 async function start() {
-    try {
-        await connectDb();
-
-        app.listen(port, () => {
-            console.log(`AGENT started at http://localhost:${port}`);
-        });
-    } catch (err) {
-        console.error(err);
+    if (!process.env.MONGODB_URI) {
+        throw new Error("Missing required environment variable: MONGODB_URI");
     }
+    if (!process.env.INTERNAL_SERVICE_TOKEN) {
+        throw new Error("Missing required environment variable: INTERNAL_SERVICE_TOKEN");
+    }
+
+    await connectDb();
+
+    const app = createApp();
+    const server = app.listen(port, host, () => {
+        console.log(`agent listening on http://${host}:${port}`);
+    });
+
+    const shutdown = (signal) => {
+        console.log(`[agent] ${signal} received, draining...`);
+        server.close(async () => {
+            await mongoose.disconnect().catch(() => {});
+            process.exit(0);
+        });
+        setTimeout(() => process.exit(1), 10_000).unref();
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
-start();
-
-
+start().catch((error) => {
+    console.error("[agent] startup aborted:", error.message);
+    process.exit(1);
+});
