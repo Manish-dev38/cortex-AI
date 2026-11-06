@@ -1,11 +1,6 @@
 import api from "../../utils/axios.js"
 
 export const updateConversation = async (payload) => {
-    try {
-        const { data } = await api.post("/api/chat/update-conversations", payload)
-        return data
-    } catch (error) {
-        console.log(error)
-        return []
-    }
+    const { data } = await api.post("/api/chat/update-conversations", payload)
+    return data
 }

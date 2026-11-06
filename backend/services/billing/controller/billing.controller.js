@@ -1,10 +1,12 @@
 import crypto from "node:crypto";
 import axios from "axios";
-import { PLANS, PLAN_IDS, pricePlan, calculateProration, MIN_CHARGEABLE_PAISA } from "../config/Plans.js";
+import { PLANS, PLAN_IDS, pricePlan, MIN_CHARGEABLE_PAISA } from "../config/Plans.js";
 import { config } from "../config/env.js";
 import razorpay from "../config/razorpay.js";
 import Payment from "../models/payment.model.js";
 import WebhookEvent from "../models/webhookEvent.model.js";
+import { revokeCredits, restoreCredits } from "../services/authClient.js";
+import { creditsToRevokeForRefund } from "../utils/refund.js";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
@@ -231,19 +233,11 @@ export const createOrder = async (req, res) => {
             discountCode = discountCodeRaw.trim().toUpperCase();
         }
 
-        let proratedCredit = 0;
-        if (req.body?.proration !== undefined && req.body?.proration !== null) {
-            const { currentPlanId, daysRemaining } = req.body.proration;
-            const from = normalizePlan(currentPlanId);
-            if (!from) {
-                return publicError(res, 400, "INVALID_PRORATION", "Proration current plan is invalid.");
-            }
-            const days = Number(daysRemaining);
-            if (!Number.isFinite(days) || days < 0 || days > PLANS[from].validity) {
-                return publicError(res, 400, "INVALID_PRORATION", "Proration days remaining is out of range.");
-            }
-            proratedCredit = calculateProration({ currentPlanId: from, newPlanId: planId, daysRemaining: days }).proratedCredit;
-        }
+        // Proration is intentionally disabled: it used to be computed from a
+        // client-supplied `daysRemaining`, which let a caller discount the
+        // order arbitrarily. Any future proration must be derived server-side
+        // from the user's stored plan and expiry.
+        const proratedCredit = 0;
 
         const pricing = pricePlan(planId, { discountCode, proratedCredit, taxRate: config.taxRateGst });
         if (!pricing) {
@@ -629,7 +623,18 @@ export const handleWebhook = async (req, res) => {
 // POST /refund
 // ---------------------------------------------------------------------------
 
+async function releaseRefundClaim(orderId) {
+    await Payment.updateOne(
+        { orderId },
+        { $set: { refundClaimAt: null }, $unset: { refundAttemptId: "" } }
+    );
+}
+
 export const requestRefund = async (req, res) => {
+    let claimedOrderId = null;
+    let refundAttemptId = null;
+    let revokedCredits = 0;
+
     try {
         const callerUserId = req.userId;
         if (!callerUserId) {
@@ -661,10 +666,60 @@ export const requestRefund = async (req, res) => {
             return publicError(res, 409, "INVALID_STATE", "No captured provider payment to refund.");
         }
 
-        const remaining = Math.max(0, (payment.amountTotal || 0) - (payment.refundAmount || 0));
+        // Single-flight claim: concurrent refund requests for the same order
+        // can no longer both pass the remaining-amount check.
+        refundAttemptId = crypto.randomUUID();
+        const claimed = await Payment.findOneAndUpdate(
+            {
+                orderId,
+                userId: callerUserId,
+                status: { $in: ["paid", "partially_refunded"] },
+                refundClaimAt: null,
+            },
+            { $set: { refundClaimAt: new Date(), refundAttemptId } },
+            { new: true }
+        );
+
+        if (!claimed) {
+            return publicError(res, 409, "REFUND_IN_PROGRESS", "A refund for this order is already being processed.", {
+                status: payment.status,
+            });
+        }
+        claimedOrderId = orderId;
+
+        const remaining = Math.max(0, (claimed.amountTotal || 0) - (claimed.refundAmount || 0));
         const target = refundRupees ?? remaining;
         if (target <= 0 || target > remaining) {
+            await releaseRefundClaim(orderId);
             return publicError(res, 400, "REFUND_EXCEEDS_TOTAL", "Refund amount exceeds the refundable total.", { refundable: remaining });
+        }
+
+        const fully = target >= remaining;
+        // Claw back the credits this refund buys back. Refuse the refund if
+        // they have already been spent, so a user cannot refund and keep the
+        // value of the plan.
+        const creditsToRevoke = creditsToRevokeForRefund({
+            credits: claimed.credits,
+            amountTotal: claimed.amountTotal,
+            refundAmount: target,
+        });
+
+        if (creditsToRevoke > 0) {
+            const revoke = await revokeCredits({
+                userId: callerUserId,
+                credits: creditsToRevoke,
+                refundAttemptId,
+                downgrade: fully,
+            });
+
+            if (!revoke.ok) {
+                await releaseRefundClaim(orderId);
+                if (revoke.status === 409) {
+                    return publicError(res, 409, "CREDITS_SPENT", "Credits from this order have already been used, so it cannot be refunded.");
+                }
+                return publicError(res, 502, "CREDIT_SERVICE_ERROR", "Unable to verify the credits for this order. Retry later.");
+            }
+            revokedCredits = creditsToRevoke;
         }
 
         let refund;
@@ -675,25 +730,39 @@ export const requestRefund = async (req, res) => {
             });
         } catch (error) {
             console.error("[billing] refund provider request failed");
+            // The provider refused the refund; put the credits back.
+            if (revokedCredits > 0) {
+                await restoreCredits({ userId: callerUserId, credits: revokedCredits, refundAttemptId });
+                revokedCredits = 0;
+            }
+            await releaseRefundClaim(orderId);
             return publicError(res, 502, "PROVIDER_ERROR", "Refund provider unavailable. Retry later.");
         }
 
-        const newRefundTotal = (payment.refundAmount || 0) + target;
-        const fully = newRefundTotal >= (payment.amountTotal || 0);
+        const newRefundTotal = (claimed.refundAmount || 0) + target;
+        const isFullyRefunded = newRefundTotal >= (claimed.amountTotal || 0);
         const updated = await Payment.findOneAndUpdate(
             { orderId },
             {
                 $set: {
-                    status: fully ? "refunded" : "partially_refunded",
-                    refundId: refund?.id ?? payment.refundId,
+                    status: isFullyRefunded ? "refunded" : "partially_refunded",
+                    refundId: refund?.id ?? claimed.refundId,
                     refundAmount: newRefundTotal,
+                    refundClaimAt: null,
                 },
+                $unset: { refundAttemptId: "" },
             },
             { new: true }
         );
         return res.status(200).json({ refunded: true, payment: sanitizePayment(updated) });
     } catch (error) {
         console.error("[billing] refund failed");
+        if (revokedCredits > 0 && refundAttemptId) {
+            await restoreCredits({ userId: req.userId, credits: revokedCredits, refundAttemptId });
+        }
+        if (claimedOrderId) {
+            await releaseRefundClaim(claimedOrderId).catch(() => {});
+        }
         return publicError(res, 500, "REFUND_FAILED", "Unable to process refund. Retry later.");
     }
 };

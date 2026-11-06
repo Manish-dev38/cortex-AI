@@ -4,17 +4,13 @@ import { ChatOpenRouter } from "@langchain/openrouter";
 const groq = new ChatGroq({
     model: "groq/compound",
     temperature: 0,
-    maxTokens: undefined,
     maxRetries: 2,
-    // other params...
-})// can add more llm 
+})
 
-const groq2 = new ChatGroq({
+const groqMini = new ChatGroq({
     model: "groq/compound-mini",
     temperature: 0,
-    maxTokens: undefined,
     maxRetries: 2,
-    // other params...
 })
 
 const openRouter = new ChatOpenRouter({
@@ -29,20 +25,23 @@ const openRouter2 = new ChatOpenRouter({
     maxTokens: 2500,
 })
 
+const MODELS = {
+    chat: groq,
+    search: groq,
+    coding: openRouter,
+    pdf: groq,
+    ppt: groq,
+    "pdf-rag": openRouter,
+    image: groq,
+    imageAnalyzer: openRouter2,
+    router: groqMini,
+    intent: groqMini,
+};
+
+/**
+ * Explicit routing: every agent maps to exactly one model. The previous
+ * `groq || groq2` expressions meant the second model was unreachable.
+ */
 export const getModel = async (agent) => {
-    switch (agent) {
-        case "chat":
-            return groq || groq2;
-        case "search":
-            return groq || groq2  // add more for different llm 
-
-        case "coding":
-            return openRouter;
-
-        case "imageAnalyzer":
-            return openRouter2
-
-        default:
-            return groq;
-    }
+    return MODELS[agent] || groq;
 }

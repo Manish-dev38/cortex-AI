@@ -2,15 +2,20 @@ import { getModel } from '../config/llmModels.js'
 import { generatePdf } from '../utils/generatePdf.js'
 import { getFromS3 } from '../utils/getFromS3.js'
 import { uploadToS3 } from '../utils/uploadToS3.js'
-import { deductCredits } from "../utils/deductCredits.js"
+import { parseJsonFromLlm } from '../utils/parseJson.js'
+import { chargeAgent, refundAgent, isInsufficientCredits } from "../utils/credits.js"
+
+const LINK_TTL_SECONDS = 24 * 60 * 60
 
 export const pdfAgent = async (state) => {
+    let charged = false
+
     try {
         const llm = await getModel("pdf")
         const prompt = `
     You are an expert document writer.
 
-    Return ONLY valid JOSN.
+    Return ONLY valid JSON.
 
     DO NOT return markdown.
 
@@ -21,7 +26,7 @@ export const pdfAgent = async (state) => {
     {
     "title":"",
     "subtitle":"",
-    ""sections":[
+    "sections":[
     {
     "heading":"",
     "points":[]
@@ -37,11 +42,11 @@ export const pdfAgent = async (state) => {
 
     `
 
+        await chargeAgent(state.userId, "pdf", state.requestId)
+        charged = true
+
         const res = await llm.invoke(prompt)
-
-        await deductCredits(state.userId, "pdf")
-
-        const data = JSON.parse(res.content)
+        const data = parseJsonFromLlm(res.content)
 
         const pdfBuffer = await generatePdf(data)
 
@@ -49,7 +54,7 @@ export const pdfAgent = async (state) => {
 
         await uploadToS3(filename, pdfBuffer, "application/pdf")
 
-        const downloadUrl = await getFromS3(filename, 24 * 60)
+        const downloadUrl = await getFromS3(filename, LINK_TTL_SECONDS)
 
         return {
             ...state,
@@ -57,15 +62,20 @@ export const pdfAgent = async (state) => {
             ** ${data.title}**
             [Download PDF](${downloadUrl})
 
-            _Link expires in 10 minutes._
+            _Link expires in 24 hours._
             `
         }
 
     } catch (error) {
-        console.log(error)
+        if (charged) {
+            await refundAgent(state.userId, "pdf", state.requestId)
+        }
+        if (isInsufficientCredits(error)) throw error
+
+        console.error("[pdf-agent] generation failed:", error?.message ?? "unknown error")
         return {
             ...state,
-            aiResponse: "Failed to Generate PDF"
+            aiResponse: "Failed to generate the PDF. Please try again."
         }
     }
 }

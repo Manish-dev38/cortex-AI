@@ -4,83 +4,101 @@ import { useDispatch, useSelector } from 'react-redux'
 import sendMessage from '../features/sendMessage.js'
 import { createConversation } from '../features/createCoversation.js'
 import { addConversation, setSelectedConversation, setConvTitle } from '../redux/conversationSlice.js'
-import { addMessages, setArtifacts, setIsLoading } from '../redux/messageSlice.js'
-import { updateConversation } from "../features/updateConversation.js"
+import { addMessages, removeLastMessage, setArtifacts, setDraft, setIsLoading } from '../redux/messageSlice.js'
+import { updateConversation } from '../features/updateConversation.js'
+import getCurrentUser from '../features/getCurrentUser.js'
+import { setUserData } from '../redux/userSlice.js'
 
 
 const ChatInput = () => {
     const [value, setValue] = useState("")
     const [selectedAgent, setSelectedAgent] = useState("auto")
     const [isSending, setIsSending] = useState(false)
-    const { messages } = useSelector(state => state.message)
+    const [error, setError] = useState("")
+    const { draft } = useSelector(state => state.message)
     const [selectedFile, setSelectedFile] = useState(null)
     const fileRef = useRef(null)
+    const textareaRef = useRef(null)
     const dispatch = useDispatch()
     const { selectedConversation } = useSelector(state => state.conversation)
 
+    // Suggestion chips write into the draft slot. It is read as part of the
+    // controlled value, so no effect (and no cascading render) is needed.
+    const inputValue = draft || value
+
+    const resetFile = () => {
+        setSelectedFile(null)
+        if (fileRef.current) fileRef.current.value = ""
+    }
+
     const handleSendMessage = async () => {
-        dispatch(setIsLoading(true))
-        const prompt = value.trim()
+        const prompt = inputValue.trim()
         if (!prompt || isSending) return
 
+        setError("")
+        dispatch(setIsLoading(true))
+        dispatch(setDraft(""))
+
         let conversation = selectedConversation
-
-        if (!conversation) {
-            const conv = await createConversation()
-            // if (!conversation?._id) return
-
-            dispatch(setSelectedConversation(conv))
-            dispatch(addConversation(conv))
-            conversation = conv
-        }
-
-        if (conversation?.title == "New Chat") {
-            await updateConversation({ id: conversation?._id, title: value.trim() })
-            dispatch(setConvTitle({ conversationId: conversation?._id, title: value.slice(0, 38) }))
-        }
-
-        setIsSending(true)
-        dispatch(addMessages({ role: "user", content: prompt }))
-        setValue("")
-
-
-        // const payload = {
-        //     prompt,
-        //     conversationId: conversation?._id,
-        //     agent: selectedAgent
-        // }
-
-        console.log(selectedFile)
-
-        const formData = new FormData()
-        formData.append("prompt", value.trim())
-        formData.append("conversationId", conversation?._id)
-        formData.append("agent", selectedAgent)
-
-        if (selectedFile) {
-            formData.append("file", selectedFile)
-        }
+        let succeeded = false
+        let optimisticMessageAdded = false
 
         try {
-            const response = await sendMessage(formData)
-            dispatch(setIsLoading(false))
+            if (!conversation) {
+                conversation = await createConversation()
+                dispatch(setSelectedConversation(conversation))
+                dispatch(addConversation(conversation))
+            }
 
-            setSelectedFile(null)
+            if (conversation?.title === "New Chat") {
+                await updateConversation({ id: conversation?._id, title: prompt })
+                dispatch(setConvTitle({ conversationId: conversation?._id, title: prompt.slice(0, 38) }))
+            }
+
+            setIsSending(true)
+            dispatch(addMessages({ role: "user", content: prompt }))
+            optimisticMessageAdded = true
+            setValue("")
+
+            const formData = new FormData()
+            formData.append("prompt", prompt)
+            formData.append("conversationId", conversation?._id)
+            formData.append("agent", selectedAgent)
+
+            if (selectedFile) {
+                formData.append("file", selectedFile)
+            }
+
+            const response = await sendMessage(formData)
 
             if (response) {
-
+                succeeded = true
                 dispatch(setArtifacts(response.artifacts || []))
-
                 dispatch(addMessages({
                     role: "assistant",
                     content: response?.answer,
                     images: response?.images
                 }))
+
+                // Credits change on every generation; refresh so the sidebar
+                // and billing drawer never show a stale balance.
+                getCurrentUser().then((user) => {
+                    if (user) dispatch(setUserData(user))
+                })
+            }
+        } catch (err) {
+            setError(err?.message || "Something went wrong. Please try again.")
+            // The optimistic user bubble was never persisted; drop it and put
+            // the prompt back so the user can retry.
+            if (optimisticMessageAdded) dispatch(removeLastMessage())
+            if (!succeeded) {
+                setValue((current) => current || prompt)
             }
         } finally {
             setIsSending(false)
+            dispatch(setIsLoading(false))
+            if (succeeded) resetFile()
         }
-
     }
 
     const agents = [
@@ -123,7 +141,7 @@ const ChatInput = () => {
 
     return (
         <div className='w-full overflow-hidden px-3 md:px-5 py-4 border-t border-white/[0.06] bg-[#0d0f14] '>
-            <div className='flex flex-col gap-2 bg-white-[0.03] border border-white/[0.07] rounded-2xl px-4 pt-3.5 pb-3 '>
+            <div className='flex flex-col gap-2 bg-white/[0.03] border border-white/[0.07] rounded-2xl px-4 pt-3.5 pb-3 '>
 
                 <div className='flex w-[80%] gap-2 pr-2 flex-wrap '>
                     {agents.map((agent) => {
@@ -148,7 +166,7 @@ const ChatInput = () => {
                             transition-all 
 
                             ${isActive
-                                        ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white border-transparent shadow[0_1px_8px_rgba(99,102,241,35)"
+                                        ? "bg-gradient-to-r from-indigo-500 to-violet-600 text-white border-transparent shadow-[0_1px_8px_rgba(99,102,241,0.35)]"
                                         : "bg-white/[0.03] text-slate-400 border-white/[0.06] hover:bg-white/[0.07] "
                                     }
                             `}>
@@ -172,7 +190,7 @@ const ChatInput = () => {
                     <div className='my-3'>
                         <div className='inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 '>
                             {
-                                selectedFile?.type === "application/pdf" ? <FileText size={16} className='text-red-400' /> : selectedFile.type.startsWith("image/") && <img src={URL.createObjectURL(selectedFile)} className='h-10 w-10 rounded-xl object-cover mt-3 ' />
+                                selectedFile?.type === "application/pdf" ? <FileText size={16} className='text-red-400' /> : selectedFile.type.startsWith("image/") && <img src={URL.createObjectURL(selectedFile)} alt={selectedFile.name} className='h-10 w-10 rounded-xl object-cover ' />
                             }
 
                             <div>
@@ -180,9 +198,9 @@ const ChatInput = () => {
                                     {selectedFile?.name}
                                 </p>
                                 <p className='text-[10px] text-slate-500 '>
-                                    {Math.ceil(selectedFile?.size)}KB
+                                    {Math.max(1, Math.round((selectedFile?.size || 0) / 1024))}KB
                                 </p>
-                                <button className='ml-2 text-slate-500 hover:text-white' onClick={() => { selectedFile(null); fileRef.current.value = "" }}><X size={14} /></button>
+                                <button type='button' className='ml-2 text-slate-500 hover:text-white' onClick={resetFile} aria-label='Remove attachment'><X size={14} /></button>
                             </div>
 
                         </div>
@@ -191,9 +209,17 @@ const ChatInput = () => {
                 }
 
                 <textarea placeholder='Ask Anything....'
-                    onChange={(e) => setValue(e.target.value)}
-                    value={value}
+                    ref={textareaRef}
+                    onChange={(e) => {
+                        setValue(e.target.value)
+                        if (draft) dispatch(setDraft(""))
+                    }}
+                    value={inputValue}
+                    disabled={isSending}
                     className='w-full bg-transparent outline-none resize-none text-[14px] text-slate-200 placeholder:text-slate-600 leading-relaxed [scrollbar-width:none] [&::-webkit-scrollbar]:hidden disabled:opacity-50 ' rows={3} />
+
+                {error && <p className='text-[12px] text-red-400' role='alert'>{error}</p>}
+
                 <div className='flex items-center justify-between'>
                     <div className='flex items-center gap-1 '>
 
@@ -203,17 +229,18 @@ const ChatInput = () => {
                                 setSelectedFile(file)
                             }
                         }} />
-                        <button className='flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06] transition-all duration-150 bg-transparent cursor-pointer' onClick={() => fileRef.current.click()}>
+                        <button type='button' className='flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06] transition-all duration-150 bg-transparent cursor-pointer' onClick={() => fileRef.current?.click()} aria-label='Attach file'>
                             <Paperclip size={16} />
                         </button>
-                        <button className='flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06] transition-all duration-150 bg-transparent cursor-pointer '>
+                        <button type='button' className='flex items-center justify-center w-8 h-8 rounded-lg text-slate-600 hover:text-slate-400 hover:bg-white/[0.05] border border-transparent hover:border-white/[0.06] transition-all duration-150 bg-transparent cursor-pointer ' title='Voice input is not available yet'>
                             <Mic size={16} />
                         </button>
                     </div>
                     <button
-                        disabled={!value.trim() || isSending}
+                        type='button'
+                        disabled={!inputValue.trim() || isSending}
                         onClick={handleSendMessage}
-                        className={`flex items-center justify-center w-8 h-8 rounded-lg border-none cursor-pointer transition-all duration-150 ${value.trim() ? "bg-gradient-to-br from-indigo-500 to-violet-700 hover:opacity-90 text-white" : "bg-white/[0.05] text-slate-600 cursor-not-allowed "} `}>
+                        className={`flex items-center justify-center w-8 h-8 rounded-lg border-none cursor-pointer transition-all duration-150 ${inputValue.trim() && !isSending ? "bg-gradient-to-br from-indigo-500 to-violet-700 hover:opacity-90 text-white" : "bg-white/[0.05] text-slate-600 cursor-not-allowed "} `}>
                         <Send size={15} />
                     </button>
                 </div>

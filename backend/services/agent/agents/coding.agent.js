@@ -1,13 +1,31 @@
 import { getModel } from "../config/llmModels.js"
-import { deductCredits } from "../utils/deductCredits.js"
+import { parseJsonFromLlm } from "../utils/parseJson.js"
+import { chargeAgent, refundAgent, isInsufficientCredits } from "../utils/credits.js"
+
+const INTENTS = [
+    "CODE_GENERATION",
+    "CODE_REVIEW",
+    "CODE_EXPLANATION",
+    "DEBUGGING",
+    "OPTIMIZATION",
+    "CONVERSATION",
+    "DOCUMENTATION",
+];
 
 export const codingAgent = async (state) => {
-    const intentLlm = await getModel("intent")
-    const llm = await getModel("coding")
-    const intentResponse = await intentLlm.invoke(`
-        You are an intent classifire.
+    let charged = false
 
-        Return ONLY of these values.
+    try {
+        const intentLlm = await getModel("intent")
+        const llm = await getModel("coding")
+
+        await chargeAgent(state.userId, "coding", state.requestId)
+        charged = true
+
+        const intentResponse = await intentLlm.invoke(`
+        You are an intent classifier.
+
+        Return ONLY one of these values.
 
         CODE_GENERATION
         CODE_REVIEW
@@ -15,17 +33,17 @@ export const codingAgent = async (state) => {
         DEBUGGING
         OPTIMIZATION
         CONVERSATION
-        DOCUMENTION
+        DOCUMENTATION
 
         User Request:
         ${state.prompt}
         `)
 
-    await deductCredits(state.userId, "coding")
+        const rawIntent = String(intentResponse.content ?? "").trim().toUpperCase()
+        const intent = INTENTS.find((value) => rawIntent.includes(value)) || "CONVERSATION"
 
-    const intent = intentResponse.content
-    if (intent == "CODE_GENERATION") {
-        const prompt = ` 
+        if (intent === "CODE_GENERATION") {
+            const prompt = `
         You are CortexAI Coding Agent.
 
         Generate the requested project.
@@ -36,28 +54,28 @@ export const codingAgent = async (state) => {
         - JavaScript
 
 
-        Use React / Node.js / Vue ONLY if expilicitly requested.
+        Use React / Node.js / Vue ONLY if explicitly requested.
 
         Rules:
         - Responsive
         - Modern UI
-        - CSS Variables 
+        - CSS Variables
         - Flexbox/Grid
         - Smooth Scroll
         - Hover Effects
         - Beautiful spacing
-        - Single page unless user aks otherwise
+        - Single page unless user asks otherwise
 
         IMAGES
         ================================
 
-        Always use real Unplash images.
-        
+        Always use real Unsplash images.
+
         Never use placeholders.
 
         Return ONLY valid JSON.
 
-        
+
         Schema:
 
         {
@@ -73,13 +91,13 @@ export const codingAgent = async (state) => {
         {
         "name":"script.js",
         "content":"..."
-        },
+        }
         ]
         }
 
         Rules:
-        - Output must starts with {
-        - Output must ends with }
+        - Output must start with {
+        - Output must end with }
         - No markdown
         - No explanation
         - No extra text
@@ -89,48 +107,34 @@ export const codingAgent = async (state) => {
         User Request:
         ${state.prompt}
         `
-        const res = await llm.invoke(prompt)
+            const res = await llm.invoke(prompt)
+            const data = parseJsonFromLlm(res.content)
 
-        let text = res.content.trim();
+            const files = (data.files || []).map(file => ({
+                name: file.name || file.names || file.filename || file.file_name,
+                content: file.content
+            })).filter((file) => typeof file.name === "string" && typeof file.content === "string")
 
-        if (text.startsWith("```")) {
-            text = text
-                .replace(/^```json\s*/i, "")
-                .replace(/^```\s*/i, "")
-                .replace(/\s*```$/, "")
-                .trim();
+            if (files.length === 0) {
+                throw new Error("Model returned no files")
+            }
+
+            return {
+                ...state,
+                aiResponse: "Code Generated Successfully.",
+                artifacts: [
+                    {
+                        id: Date.now(),
+                        type: "Project",
+                        files,
+                        title: state.prompt
+                    }
+                ]
+            }
+
         }
 
-        console.log(res)
-
-
-        const data = JSON.parse(text)
-
-
-
-        data.files = (data.files || []).map(file => ({
-            name: file.name || file.names || file.filename || file.file_name,
-            content: file.content
-        }));
-
-        await deductCredits(state.userId, "coding")
-
-        return {
-            ...state,
-            aiResponse: "Code Generated Successfully.",
-            artifacts: [
-                {
-                    id: Date.now(),
-                    type: "Project",
-                    files: data.files || [],
-                    title: state.prompt
-                }
-            ]
-        }
-
-    }
-
-    const res = await llm.invoke(`
+        const res = await llm.invoke(`
         The user's request is: ${intent}
 
         Return Markdown only.
@@ -142,21 +146,33 @@ export const codingAgent = async (state) => {
 
         # Explanation
 
-        #Problems
+        # Problems
 
-        #Improvements
+        # Improvements
 
-        #Best Pratices
+        # Best Practices
 
         # Optimized Code (if needed)
 
         User Request: ${state.prompt}
         `)
 
-    const data = res.content
-    return {
-        ...state,
-        aiResponse: data,
-        artifacts: []
+        return {
+            ...state,
+            aiResponse: res.content,
+            artifacts: []
+        }
+    } catch (error) {
+        if (charged) {
+            await refundAgent(state.userId, "coding", state.requestId)
+        }
+        if (isInsufficientCredits(error)) throw error
+
+        console.error("[coding-agent] generation failed:", error?.message ?? "unknown error")
+        return {
+            ...state,
+            aiResponse: "I could not complete the coding request. Please try again.",
+            artifacts: []
+        }
     }
 }

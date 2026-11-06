@@ -1,20 +1,20 @@
-import React, { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect } from 'react';
+
+const THINKING_LABELS = ["Thinking", "Analyzing", "Reasoning", "Generating"]
 
 function LoadingAnimation() {
 
-    const Thinking_Labels = ["Thinking", "Analyzing", "Reasoning", "Generating"]
     const [labelIndex, setLabelIndex] = useState(0)
 
     useEffect(() => {
         const interval = setInterval(() => {
-            setLabelIndex(prev => (prev + 1) % Thinking_Labels.length)
+            setLabelIndex(prev => (prev + 1) % THINKING_LABELS.length)
         }, 1800)
         return () => clearInterval(interval)
     }, [])
 
-    const label = Thinking_Labels[labelIndex]
+    const label = THINKING_LABELS[labelIndex]
 
     return (
         <div className="flex items-center gap-3 max-w-[72%] justify-start py-1">
@@ -52,14 +52,15 @@ function LoadingAnimation() {
                         initial={{ opacity: 0, y: 6 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -6 }}
-                        transition={{ durationn: 0.25, ease: "easeOut" }}
+                        transition={{ duration: 0.25, ease: "easeOut" }}
                     >
 
                         {label.split("").map((ch, i) => (
-                            <motion.dev
+                            <motion.span
                                 key={i}
-                                className='text-[13px] font-medium tracking-wide text-wide text-slate-400'
-                                animate={{
+                                className='text-[13px] font-medium tracking-wide text-slate-400'
+                                animate={{ opacity: [0.45, 1, 0.45] }}
+                                transition={{
                                     duration: 1.4,
                                     repeat: Infinity,
                                     ease: "easeInOut",
@@ -67,7 +68,7 @@ function LoadingAnimation() {
                                 }}
                             >
                                 {ch}
-                            </motion.dev>
+                            </motion.span>
                         ))}
 
                     </motion.div>

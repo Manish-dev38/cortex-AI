@@ -1,22 +1,38 @@
 import redis from "../../shared/redis/redis.js"
 
+/**
+ * Resolves the opaque session cookie to a user id. The Redis payload is
+ * intentionally minimal ({ userId }) so plan/credits can never be stale here.
+ */
 const protect = async (req, res, next) => {
     try {
         const sessionId = req.cookies?.session
-        if (!sessionId) {
+        if (!sessionId || typeof sessionId !== "string") {
             return res.status(401).json({ message: "Unauthorized" })
         }
+
         const session = await redis.get(`session-${sessionId}`)
-        console.log("Redis session:", session);
         if (!session) {
             return res.status(401).json({ message: "Session expired" })
         }
 
-        req.user = JSON.parse(session)
-        next()
+        let parsed
+        try {
+            parsed = JSON.parse(session)
+        } catch {
+            return res.status(401).json({ message: "Session expired" })
+        }
 
+        const userId = parsed?.userId
+        if (typeof userId !== "string" || userId.length === 0) {
+            return res.status(401).json({ message: "Session expired" })
+        }
+
+        req.userId = userId
+        return next()
     } catch (error) {
-        return res.status(500).json({ message: `protect ERROR ${error}` })
+        console.error("[gateway] session lookup failed")
+        return res.status(500).json({ message: "Unexpected error." })
     }
 }
 

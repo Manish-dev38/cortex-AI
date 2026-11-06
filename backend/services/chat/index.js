@@ -1,38 +1,58 @@
-import express from 'express'
-import connectDb from './config/db.js';
 import 'dotenv/config';
-import router from './routes/chat.routes.js';
-
+import mongoose from 'mongoose';
+import connectDb from './config/db.js';
+import { createApp } from './app.js';
+import Conversation from './models/conversation.model.js';
+import Message from './models/message.model.js';
 
 const port = process.env.PORT || 8002;
+const host = process.env.HOST || "127.0.0.1";
 
-const app = express();
-app.use(express.json());
-
-app.use("/", router)
-
-
-console.log("port=", process.env.PORT)
-
-app.get("/", (req, res) => {
-    res.json({ message: "hello from CHAT" });
-})
-
-console.log(`MONGODB URI=>:${process.env.MONGODB_URI}`)
-
-// MONGODB_URI is provided through .env. Never commit connection strings.
-async function start() {
+async function removeOrphanMessages() {
     try {
-        await connectDb();
-
-        app.listen(port, () => {
-            console.log(`CHARTED started at http://localhost:${port}`);
-        });
-    } catch (err) {
-        console.error(err);
+        const conversationIds = await Conversation.distinct("_id");
+        const result = await Message.deleteMany({ conversationId: { $nin: conversationIds } });
+        if (result.deletedCount > 0) {
+            console.log(`[chat] removed ${result.deletedCount} orphan messages`);
+        }
+    } catch (error) {
+        console.error("[chat] orphan message sweep failed");
     }
 }
 
-start();
+async function start() {
+    if (!process.env.MONGODB_URI) {
+        throw new Error("Missing required environment variable: MONGODB_URI");
+    }
+    if (!process.env.INTERNAL_SERVICE_TOKEN) {
+        throw new Error("Missing required environment variable: INTERNAL_SERVICE_TOKEN");
+    }
 
+    await connectDb();
 
+    const app = createApp();
+    const server = app.listen(port, host, () => {
+        console.log(`chat listening on http://${host}:${port}`);
+    });
+
+    // Mongo TTL cannot cascade, so sweep messages whose conversation expired.
+    const sweep = setInterval(removeOrphanMessages, 60 * 60 * 1000);
+    sweep.unref();
+
+    const shutdown = (signal) => {
+        console.log(`[chat] ${signal} received, draining...`);
+        clearInterval(sweep);
+        server.close(async () => {
+            await mongoose.disconnect().catch(() => {});
+            process.exit(0);
+        });
+        setTimeout(() => process.exit(1), 10_000).unref();
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+}
+
+start().catch((error) => {
+    console.error("[chat] startup aborted:", error.message);
+    process.exit(1);
+});

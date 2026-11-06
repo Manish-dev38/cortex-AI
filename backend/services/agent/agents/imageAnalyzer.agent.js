@@ -1,15 +1,23 @@
 import { SystemMessage } from "@langchain/core/messages"
 import { HumanMessage } from "@langchain/core/messages";
 import { getModel } from "../config/llmModels.js"
-import fs from "fs/promises"
-import { deductCredits } from "../utils/deductCredits.js"
+import fs from "node:fs/promises"
+import { chargeAgent, refundAgent, isInsufficientCredits } from "../utils/credits.js"
 
 export const imageAnalyzer = async (state) => {
+    let charged = false
+
     try {
+        if (!state.file?.path) {
+            throw new Error("No image upload was provided")
+        }
+
         const llm = await getModel("imageAnalyzer")
 
-        const imageBuffer = await fs.readFile(state.file.path)
+        await chargeAgent(state.userId, "vision", state.requestId)
+        charged = true
 
+        const imageBuffer = await fs.readFile(state.file.path)
         const base64Image = imageBuffer.toString("base64")
 
         const messages = [
@@ -21,10 +29,10 @@ export const imageAnalyzer = async (state) => {
                 - Analyze only the uploaded image.
                 - Answer the user's question accurately.
                 - If text exists in the image, extract it.
-                - If charts or tables exists, explain them.
-                - If something is unclear, say no.
+                - If charts or tables exist, explain them.
+                - If something is unclear, say so.
                 - Use Markdown when helpful.
-                - Do not hallucinate. 
+                - Do not hallucinate.
                 `
             ),
             new HumanMessage(
@@ -32,7 +40,7 @@ export const imageAnalyzer = async (state) => {
                     content: [
                         {
                             type: "text",
-                            text: state.prompt || "analyze the image"
+                            text: state.prompt || "Analyze the image"
                         },
                         {
                             type: "image_url",
@@ -46,21 +54,21 @@ export const imageAnalyzer = async (state) => {
         ]
 
         const response = await llm.invoke(messages)
-        await deductCredits(state.userId, "vision")
 
         return {
             ...state,
             aiResponse: response.content
         }
     } catch (error) {
-        console.log(error)
+        if (charged) {
+            await refundAgent(state.userId, "vision", state.requestId)
+        }
+        if (isInsufficientCredits(error)) throw error
 
+        console.error("[image-analyzer] analysis failed:", error?.message ?? "unknown error")
         return {
             ...state,
-            airesponse: 'Failed to Anlayze File'
+            aiResponse: 'Failed to analyze the file. Please try again.'
         }
-    }
-    finally {
-        await fs.unlink(state.file.path)
     }
 }

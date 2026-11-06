@@ -5,11 +5,11 @@ dotenv.config();
 const OPTIONAL_DEFAULTS = {
     PORT: "8004",
     RAZOR_WEBHOOK_SECRET: "",
-    BILLING_INTERNAL_TOKEN: "",
     AUTH_SERVICE_TIMEOUT_MS: "8000",
     CUSTOM_DNS_SERVERS: "",
     TAX_RATE_GST: "0.18",
     BODY_LIMIT: "100kb",
+    HOST: "127.0.0.1",
 };
 
 function readEnv(name) {
@@ -34,6 +34,9 @@ const MONGODB_URI = requireEnv("MONGODB_URI");
 const RAZOR_KEY_ID = requireEnv("RAZOR_KEY_ID");
 const RAZOR_KEY_SECRET = requireEnv("RAZOR_KEY_SECRET");
 const AUTH_SERVICE = requireEnv("AUTH_SERVICE").replace(/\/+$/, "");
+// Billing calls privileged auth endpoints, so the shared service token is
+// mandatory, not optional.
+const INTERNAL_SERVICE_TOKEN = requireEnv("INTERNAL_SERVICE_TOKEN");
 
 if (looksPlaceholder(MONGODB_URI) || looksPlaceholder(RAZOR_KEY_SECRET)) {
     throw new Error("Placeholder credentials detected. Set real environment variables via the secret manager.");
@@ -60,6 +63,7 @@ if (!Number.isFinite(TAX_RATE_GST) || TAX_RATE_GST < 0 || TAX_RATE_GST > 1) {
 
 export const config = {
     port: PORT,
+    host: readEnv("HOST") || "127.0.0.1",
     mongodbUri: MONGODB_URI,
     razorKeyId: RAZOR_KEY_ID,
     razorKeySecret: RAZOR_KEY_SECRET,
@@ -68,7 +72,7 @@ export const config = {
     razorWebhookSecret: readEnv("RAZOR_WEBHOOK_SECRET") || RAZOR_KEY_SECRET,
     authService: AUTH_SERVICE,
     authServiceTimeoutMs: AUTH_SERVICE_TIMEOUT_MS,
-    internalToken: readEnv("BILLING_INTERNAL_TOKEN"),
+    internalToken: INTERNAL_SERVICE_TOKEN,
     customDnsServers: readEnv("CUSTOM_DNS_SERVERS")
         .split(",")
         .map((s) => s.trim())
