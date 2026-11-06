@@ -82,7 +82,7 @@ const SlideBar = () => {
 
             {mobileOpen && <div className='lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm' onClick={() => setMobileOpen(false)} />}
 
-            <div className={` fixed lg:static inset-y-0 z-50 w-[270px] h-screen shrink-0 bg-[#0d0f14] border-r border-white/[0.06] transition-transform duration-250 ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
+            <div className={` fixed lg:static inset-y-0 z-50 w-[270px] h-screen shrink-0 bg-[#0d0f14] border-r border-white/[0.06] transition-transform duration-[250ms] ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
                 `}>
 
 
@@ -101,14 +101,14 @@ const SlideBar = () => {
                         <span className='text-[16px] font-semibold text-slate-100 tracking-tight flex-1'>
                             CortexAI
                         </span>
-                        <span className='text-[10px] font-medium text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full tracking-wide'>Free</span>
+                        <span className='text-[10px] font-medium text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full tracking-wide'>{userData?.plan || "Free"}</span>
                         <button className='flex items-center justify-center w-7 h-7 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/[0.05] transition-colors duration-150 bg-transparent border-none cursor-pointer' onClick={() => dispatch(setSelectedConversation(null))} >
                             <PenBoxIcon size={12} />
                         </button>
                     </div>
 
                     <div className='px-4 pt-4 pb-1'>
-                        <button className='w-full flex items-center justify-center gap-2 text-sm font-medium text-white bg-linear-to-br from-indigo-500 to-violet-700 rounded-xl py-[10px] border-none cursor-pointer hover:opacity-90 transition-opacity duration-150' onClick={() => dispatch(setSelectedConversation(null))}>
+                        <button className='w-full flex items-center justify-center gap-2 text-sm font-medium text-white bg-gradient-to-br from-indigo-500 to-violet-700 rounded-xl py-[10px] border-none cursor-pointer hover:opacity-90 transition-opacity duration-150' onClick={() => dispatch(setSelectedConversation(null))}>
                             <Plus size={15} />
                             New Chat
                         </button>
@@ -163,7 +163,7 @@ const SlideBar = () => {
                                     <div className='flex flex-col min-w-0'>
                                         <span className='text-[13px] font-medium text-slate-100 truncate'>{userData?.name || 'User'}</span>
                                         <span className='text-[11px] text-slate-500 truncate'>{userData?.email || ''}</span>
-                                        <span className='text-[10px] text-slate-600 mt-px'>{"Free Plan"}</span>
+                                        <span className='text-[10px] text-slate-600 mt-px'>{userData?.plan ? `${userData.plan} Plan` : "Free Plan"}</span>
                                     </div>
                                     <div className='flex gap-1'>
                                         <button

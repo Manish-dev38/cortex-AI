@@ -1,8 +1,7 @@
-import React from 'react'
 import { useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Heading1, X, ExternalLink, Check, Copy, Download } from 'lucide-react'
+import { X, ExternalLink, Check, Copy, Download } from 'lucide-react'
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 
@@ -41,11 +40,11 @@ const MessageBubble = ({ role, content, images }) => {
         <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[72%] px-4 py-2.5 rounded-2xl text-[13.5px] leading-relaxed 
                 ${isUser
-                    ? "bg-linear-to-br from-indigo-500 to-violet-700 text-white rounded-tr-sm"
+                    ? "bg-gradient-to-br from-indigo-500 to-violet-700 text-white rounded-tr-sm"
                     : "bg-white/[0.04] border border-white/[0.07] text-slate-200 rounded-tl-sm"
                 }`}>
 
-                {images.length > 0 && (
+                {images?.length > 0 && (
                     <div className='flex flex-wrap gap-3 mt-4 '>
                         {images?.map((img, i) => (
                             <img
@@ -190,9 +189,9 @@ const MessageBubble = ({ role, content, images }) => {
                         //     ),
 
                         pre: ({ children }) => (
-                            <pre className="bg-[#111827] rounded-xl overflow-x-auto my-4">
+                            <>
                                 {children}
-                            </pre>
+                            </>
                         ),
 
                         code: ({ className, children }) => {
@@ -276,20 +275,21 @@ const MessageBubble = ({ role, content, images }) => {
             </div>
 
             {lightBox &&
-                <div className='fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6'>
+                <div className='fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6' onClick={() => setLightBox(null)}>
                     <button className='absolute right-5 top-5 text-white/80 hover:text-white bg-white/10 rounded-full p-2 border-none cursor-pointer'
                         onClick={() => setLightBox(null)}>
                         <X className='cursor-pointer' />
                     </button>
                     <button
                         className='absolute right-16 top-5 text-white/80 hover:text-white bg-white/10 rounded-full p-2 border-none cursor-pointer'
-                        onClick={() => handleDownload(lightBox)}
+                        onClick={(event) => { event.stopPropagation(); handleDownload(lightBox) }}
                         title='Download image'
                     >
                         <Download size={20} />
                     </button>
                     <img
                         src={lightBox}
+                        onClick={(event) => event.stopPropagation()}
                         className='max-w-[90vw] max-h-[85vh] rounded-2xl border border-white/10 shadow-2xl object-contain '
                     />
                 </div>

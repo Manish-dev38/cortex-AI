@@ -59,7 +59,7 @@ const Home = () => {
                     </div>
                     {loginError && <p className='text-[13px] text-red-400'>{loginError}</p>}
                     <button
-                        className='w-full flex items-center justify-center gap-3 py-[11px] rounded-xl text-sm font-medium text-white bg-linear-to-br from-indigo-500 to-violet-700 hover:from-indigo-400 hover:to-violet-600 transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60'
+                        className='w-full flex items-center justify-center gap-3 py-[11px] rounded-xl text-sm font-medium text-white bg-gradient-to-br from-indigo-500 to-violet-700 hover:from-indigo-400 hover:to-violet-600 transition-all duration-150 cursor-pointer disabled:cursor-not-allowed disabled:opacity-60'
                         onClick={googleLogin}
                         disabled={isLoggingIn}
                     >

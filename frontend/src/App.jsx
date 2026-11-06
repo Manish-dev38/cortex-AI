@@ -1,4 +1,3 @@
-import React from 'react'
 import Home from './pages/Home'
 import { useEffect } from 'react'
 import getCurrentUser from './features/getCurrentUser.js'
@@ -15,7 +14,7 @@ const App = () => {
       dispatch(setUserData(data))
     }
     getUser();
-  }, []);
+  }, [dispatch]);
 
   return (
     <>
